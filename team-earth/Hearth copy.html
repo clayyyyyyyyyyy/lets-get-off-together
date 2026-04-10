@@ -15,7 +15,7 @@
     let particles = [];
     let symmetry = 6;
     let t = 0;
-    let zoom = 80;
+    let zoom;
     let touchInfluence = 0;
 
     function setup() {
@@ -24,6 +24,8 @@
       noStroke();
       pixelDensity(3); // Smoother performance
       frameRate(60);
+
+      zoom = min(width, height) * 0.2;
 
       for (let i = 0; i < 3500; i++) {
         particles.push(new FlameParticle());
@@ -131,6 +133,7 @@
 
     function windowResized() {
       resizeCanvas(windowWidth, windowHeight);
+      zoom = min(width, height) * 0.2;
     }
   </script>
 </body>

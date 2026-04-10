@@ -23,6 +23,8 @@
     function draw() {
         // Optional: drawDynamicBackground(frameCount * 0.02); // Comment this if you want a static black background
         translate(width / 2, height / 2);
+        let s = min(width, height) / 380;
+        scale(s);
 
         let mouseAngle = atan2(mouseY - height / 2, mouseX - width / 2);
         drawAnimatedHyperbolicLines(frameCount * 0.1, mouseAngle);
