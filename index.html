@@ -75,6 +75,16 @@
         artworkIndex = 0;
         showCurrent();
         startCycle();
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        advance();
+        startCycle();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        const collection = collections[collectionIndex];
+        artworkIndex = (artworkIndex - 1 + collection.length) % collection.length;
+        showCurrent();
+        startCycle();
       }
     });
 
