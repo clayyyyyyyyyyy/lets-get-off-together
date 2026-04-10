@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Hypertorus</title>
+  <style>
+    html,body{ margin:0; padding:0; background:#000; height:100%; overflow:hidden; }
+    canvas{ display:block; }
+  </style>
+</head>
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
+  <script>
+    let angle = 0;
+    let wAngle = 0;
+    let touchYFactor = 0.5;
+    let touchXFactor = 0.5;
+    let inputX = null;
+    let inputY = null;
+    let isInteracting = false;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight, WEBGL);
+      colorMode(HSB, 360, 75, 75);
+      noStroke();
+    }
+
+    function draw() {
+      background(0);
+
+      // Input handling
+      if (touches.length > 0) {
+        inputX = touches[0].x;
+        inputY = touches[0].y;
+        isInteracting = true;
+      } else if (
+        mouseIsPressed &&
+        mouseX >= 0 && mouseX <= width &&
+        mouseY >= 0 && mouseY <= height
+      ) {
+        inputX = mouseX;
+        inputY = mouseY;
+        isInteracting = true;
+      } else {
+        isInteracting = false;
+      }
+
+      if (isInteracting) {
+        touchYFactor = constrain(map(inputY, 0, height, 1.2, 0.2), 0.2, 1.2);
+        touchXFactor = constrain(map(inputX, 0, width, 0.2, 1.2), 0.2, 1.2);
+      } else {
+        touchYFactor = lerp(touchYFactor, 0.5, 0.02);
+        touchXFactor = lerp(touchXFactor, 0.5, 0.02);
+      }
+
+      // Mobile vs desktop logic
+      let layers, pointsPerLayer, sphereSize, torusRadius, torusTube, maxRadius;
+      if (width <= 800) {
+        // Mobile: preserve original values
+        layers = 35;
+        pointsPerLayer = 35;
+        sphereSize = 3;
+        torusRadius = 5;
+        torusTube = 2;
+        maxRadius = 200;
+      } else {
+        // Desktop: scale up
+        let scaleFactor = min(width, height) / 800;
+        layers = floor(35 * scaleFactor);
+        pointsPerLayer = floor(35 * scaleFactor);
+        sphereSize = 3 * scaleFactor;
+        torusRadius = 5 * scaleFactor;
+        torusTube = 2 * scaleFactor;
+        maxRadius = min(width * 0.4, height * 0.35);
+      }
+
+      const globalHueShift = frameCount * 0.3 * touchYFactor;
+
+      // Lighting
+      let lx = sin(frameCount * 0.01) * 600;
+      let ly = cos(frameCount * 0.01) * 600;
+      let lz = sin(frameCount * 0.01) * cos(frameCount * 0.01) * 600;
+      pointLight(255, 255, 255, lx, ly, lz);
+      ambientLight(40, 40, 40);
+
+      // Rotation
+      rotateX(frameCount * 0.003 * touchXFactor);
+      rotateY(frameCount * 0.004 * touchXFactor);
+      rotateZ(frameCount * 0.005 * touchXFactor);
+
+      // Draw structure
+      for (let j = 0; j < layers; j++) {
+        let layerOffset = map(j, 0, layers, -PI, PI);
+        for (let i = 0; i < pointsPerLayer; i++) {
+          const theta = map(i, 0, pointsPerLayer, 0, TWO_PI);
+          const phi = map(j, 0, layers, 0, PI);
+          let r = maxRadius * (0.5 + 0.5 * sin(frameCount * 0.01 * touchYFactor + layerOffset));
+          let x = r * sin(phi) * cos(theta + wAngle);
+          let y = r * sin(phi) * sin(theta + wAngle);
+          let z = r * cos(phi);
+
+          let h = (globalHueShift + i * 10 + j * 5 + sin(theta + phi) * 30) % 360;
+          let s = 100;
+          let b = map(sin(frameCount * 0.01 + layerOffset), -1, 1, 75, 100);
+
+          ambientMaterial(h, s, b);
+
+          push();
+          translate(x, y, z);
+          if (j % 3 === 0) {
+            torus(torusRadius, torusTube);
+          } else {
+            sphere(sphereSize + sin(frameCount * 0.02 + i) * 0.5);
+          }
+          pop();
+        }
+      }
+
+      angle += 0.006;
+      wAngle += 0.02 * touchYFactor;
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Puddle</title>
+  <style>
+    html,body{ margin:0; padding:0; background:#000; height:100%; overflow:hidden; }
+    canvas{ display:block; }
+  </style>
+</head>
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
+  <script>
+    let t = 0;
+    let p = [];
+    let glyphSets = [
+      ['*', '+', '-', '=', '%', '#', 'e', 'x', 'H', '_', '|', '∞', '∆', '§'],
+      ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+      ['.', ':', '-', '=', '*', '#', '@'],
+      ['░', '▒', '▓', '█', '■', '□']
+    ];
+    let currentSet = 0;
+    let lastMouseX = 0;
+
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      pixelDensity(2);
+      colorMode(HSB, 360, 100, 100, 100);
+      textFont('monospace');
+      textAlign(CENTER, CENTER);
+      textSize(6);
+      noStroke();
+      background(0);
+
+      for (let i = 0; i < 100; i++) {
+        p[i] = {
+          base: random(0.5, 1.5),
+          amp: random(0.5, 2),
+          speed: random(0.0001, 0.0003),
+          phase: random(TWO_PI)
+        };
+      }
+    }
+
+    function draw() {
+      // Soft color veil
+      fill(0, 0, 0, 10);
+      rect(0, 0, width, height);
+
+      // Interaction-controlled modulation
+      let colorSpeed = map(mouseX, 0, width, 5, 25);
+      let flickerThreshold = map(mouseY, 0, height, 0.4, 0.8);
+      let stirring = abs(mouseX - lastMouseX) * 0.001;
+      lastMouseX = mouseX;
+
+      let evolvingP = p.map((param, i) => {
+        return param.base + param.amp * sin(t * param.speed + param.phase)
+               + noise(t * param.speed * 0.5 + i) * 0.5;
+      });
+
+      let step = 6;
+      textSize(step);
+      let chars = glyphSets[currentSet];
+
+      for (let x = 0; x < width; x += step) {
+        for (let y = 0; y < height; y += step) {
+          let u = map(x, 0, width, -PI, PI);
+          let v = map(y, 0, height, -PI, PI);
+          let val = layeredEquation(u, v, t, evolvingP);
+          let f = fractVal(val);
+
+          let flicker = flickerThreshold + 0.2 * sin(t * 1.618 + val * 8);
+
+          if (f > flicker) {
+            // Divine color modulation
+            let hueA = (f * 360 + t * colorSpeed) % 360;
+            let hueB = (360 * sin(f * TWO_PI + t * 0.33)) % 360;
+            let hueC = (360 * cos(f * TWO_PI - t * 0.21)) % 360;
+            let hue = (hueA + hueB + hueC) / 3;
+
+            let sat = 100;
+            let bright = 100;
+            let charIndex = floor(f * chars.length) % chars.length;
+            let glyph = chars[charIndex];
+
+            fill((hue + 360) % 360, sat, bright, 100);
+            text(glyph, x + step / 2, y + step / 2);
+          }
+        }
+      }
+
+      t += 0.0008 + stirring;
+    }
+
+    function layeredEquation(x, y, t, p) {
+      let a = sin(x * p[1] + t * p[2]) * cos(y * p[3] - t * p[4]);
+      let b = cos(x * p[5] - y * p[6] + t * p[7]);
+      let c = sin(x * y * p[8] + t * p[9]);
+
+      let m1 = mix(a, b, fractVal(t * 0.3));
+      let m2 = mix(b, c, fractVal(t * 0.5));
+      let m3 = mix(c, a, fractVal(t * 0.7));
+
+      let composite = sin(m1 + m2 * m3 + t * p[10]) * 2.5;
+      let feedback = sin(5 * composite + t * p[11]) * cos(3 * composite - t * p[12]);
+
+      return fract(p[0] * (composite + feedback));
+    }
+
+    function mix(a, b, x) {
+      return a * (1 - x) + b * x;
+    }
+
+    function fractVal(x) {
+      return x - floor(x);
+    }
+
+    function mousePressed() {
+      currentSet = (currentSet + 1) % glyphSets.length;
+    }
+
+    function touchStarted() {
+      currentSet = (currentSet + 1) % glyphSets.length;
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Julia</title>
+  <style>
+    html,body{ margin:0; padding:0; background:#000; height:100%; overflow:hidden; }
+    canvas{ display:block; }
+  </style>
+</head>
+<body>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.3/lib/p5.min.js"></script>
+  <script>
+    const POWER_MODE = true;
+
+    let sh;
+    let fragSource;
+
+    // --- Interaction state ---
+    let yaw = 0.0, pitch = 0.0;
+    let lastDragX = null, lastDragY = null;
+
+    // Pinch zoom
+    let pinchStartDist = null;
+    const ZOOM_MIN = 0.35;
+    const ZOOM_MAX = 2.25;
+    let zoom = 1.30; // start zoomed out
+
+    // Brightness / inversion
+    let invertOn = false;
+    let isTouching = false;
+
+    // Tap detection
+    let tapStartT = 0;
+    let tapStartX = 0, tapStartY = 0;
+
+    // Idle spin
+    let prevMillis = 0;
+    const IDLE_SPIN_YAW = 0.18;   // rad/sec
+    const IDLE_SPIN_PITCH = 0.00;
+
+    function buildFrag({ STEPS, STEP_BASE_DEFAULT }) {
+      return `
+#ifdef GL_ES
+precision mediump float;
+#endif
+
+varying vec2 vUv;
+uniform vec2  uResolution;
+uniform float uTime;
+
+// Interactive uniforms
+uniform float uZoom;      // (0.35..2.25)
+uniform float uYaw;       // radians
+uniform float uPitch;     // radians
+uniform float uHolo;      // 2.0 (default) .. 3.0 (press)
+uniform float uStepBase;  // base step size
+uniform float uAbsorbK;   // absorption falloff
+uniform float uAlphaK;    // alpha scale
+uniform float uInvert;    // 0 or 1
+
+float sat(float x){ return clamp(x,0.0,1.0); }
+vec3  sat3(vec3 v){ return clamp(v,0.0,1.0); }
+float hash(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
+
+// ---------- tiny value noise ----------
+float hash31(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7)))*43758.5453); }
+float noise3(vec3 p){
+  vec3 i=floor(p), f=fract(p);
+  vec3 u=f*f*(3.0-2.0*f);
+  float n000=hash31(i+vec3(0,0,0)), n100=hash31(i+vec3(1,0,0));
+  float n010=hash31(i+vec3(0,1,0)), n110=hash31(i+vec3(1,1,0));
+  float n001=hash31(i+vec3(0,0,1)), n101=hash31(i+vec3(1,0,1));
+  float n011=hash31(i+vec3(0,1,1)), n111=hash31(i+vec3(1,1,1));
+  float nx00=mix(n000,n100,u.x), nx10=mix(n010,n110,u.x);
+  float nx01=mix(n001,n101,u.x), nx11=mix(n011,n111,u.x);
+  float nxy0=mix(nx00,nx10,u.y), nxy1=mix(nx01,nx11,u.y);
+  return mix(nxy0,nxy1,u.z); // 0..1
+}
+float doubleExpSigmoid(float x, float a){
+  x = clamp(x,0.0,1.0);
+  if (x < 0.5) return 0.5*pow(2.0*x, 1.0/a);
+  return 1.0 - 0.5*pow(2.0*(1.0-x), 1.0/a);
+}
+
+// ---------- palette ----------
+vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d){
+  return a + b * cos(6.2831853 * (c*t + d));
+}
+
+// ---------- Quaternion Julia ----------
+vec4 qmul(vec4 A, vec4 B){
+  return vec4(
+    A.x*B.x - A.y*B.y - A.z*B.z - A.w*B.w,
+    A.x*B.y + A.y*B.x + A.z*B.w - A.w*B.z,
+    A.x*B.z - A.y*B.w + A.z*B.x + A.w*B.y,
+    A.x*B.w + A.y*B.z - A.z*B.y + A.w*B.x
+  );
+}
+
+vec4 fractalDP(vec3 pos, float time){
+  float w = 0.5 * sin(time*0.30);
+  vec4 q = vec4(pos, w);
+
+  float r  = 0.3 + 0.1*sin(time*0.30);
+  float th = 0.5*time;
+  vec4 c = vec4(r*cos(th), r*sin(th), 0.25*sin(time*0.20), 0.25*cos(time*0.27));
+
+  float phaseXY = 0.0;
+  float phaseZW = 0.0;
+  float mag = 0.0;
+  float trapMin = 1e9;
+
+  for(int i=0;i<12;i++){
+    q = qmul(q,q) + c;
+    phaseXY += atan(q.y, q.x);
+    phaseZW += atan(q.w, q.z);
+    mag = dot(q,q);
+    trapMin = min(trapMin, mag);
+    if(mag > 8.0) break;
+  }
+
+  float density = exp(-0.15*mag);
+  return vec4(density, phaseXY, phaseZW, trapMin);
+}
+
+void main(){
+  vec2 uv = vUv*2.0 - 1.0;
+  uv.x *= uResolution.x/uResolution.y;
+
+  // Zoom mapping
+  float z01 = sat( (uZoom - 0.35) / (2.25 - 0.35) );
+  float camZ   = mix(1.9, 4.2, z01);
+  float focalK = mix(-1.35, -0.90, z01);
+
+  vec3 ro = vec3(0.0, 0.0, camZ);
+  vec3 rd = normalize(vec3(uv, focalK));
+
+  // Full-angle rotation: yaw then pitch
+  float cy = cos(uYaw), sy = sin(uYaw);
+  float cx = cos(uPitch), sx = sin(uPitch);
+  mat3 RY = mat3( cy,0.0,sy,  0.0,1.0,0.0,  -sy,0.0,cy );
+  mat3 RX = mat3( 1.0,0.0,0.0,  0.0,cx,-sx,  0.0,sx,cx );
+  rd = RX * (RY * rd);
+  ro = RX * (RY * ro);
+
+  const int STEPS = ${STEPS};
+  float STEP_BASE = ${STEP_BASE_DEFAULT.toFixed(3)};
+  STEP_BASE = uStepBase;
+
+  float t  = 0.0, maxT = 6.0;
+  vec3  col = vec3(0.0);
+  float accAlpha = 0.0;
+
+  vec3 L1 = normalize(vec3( 0.5, 0.8,  0.2));
+  vec3 L2 = normalize(vec3(-0.6, 0.3, -0.4));
+
+  float jitter = (hash(gl_FragCoord.xy + uTime*vec2(17.0,43.0)) - 0.5)*0.02;
+  float prevDens = 0.0;
+
+  for(int i=0;i<STEPS;i++){
+    vec3 pos = ro + rd*t;
+
+    // Dual sample
+    vec4 A = fractalDP(pos, uTime);
+    float densA=A.x, phase1A=A.y, phase2A=A.z, trapA=A.w;
+
+    float stepSize = STEP_BASE;
+    stepSize *= mix(1.25, 0.65, sat(densA*4.0));
+    vec3 posB = pos + rd*(stepSize*0.5);
+    vec4 B = fractalDP(posB, uTime);
+
+    float dens   = 0.6*A.x + 0.4*B.x;
+    float phase1 = 0.6*A.y + 0.4*B.y;
+    float phase2 = 0.6*A.z + 0.4*B.z;
+    float trap   = min(A.w, B.w);
+
+    if(dens > 1e-4){
+      float edge = sat(abs(dens - prevDens) * 3.0);
+      float intf = 0.5 + 0.5*cos(phase1 - 1.35*phase2);
+
+      float hueA = fract(0.55 + phase1/6.2831853);
+      float hueB = fract(0.55 + phase2/6.2831853 + 0.27);
+      float depthMod = sat(0.5 + 0.5*sin(0.35*t + 0.7*uTime));
+
+      vec3 colA = palette(hueA + 0.12*depthMod,
+                          vec3(0.55,0.60,0.65),
+                          vec3(0.45,0.35,0.50),
+                          vec3(1.00,1.20,0.90),
+                          vec3(0.00,0.15,0.33));
+      vec3 colB = palette(hueB + 0.10*depthMod,
+                          vec3(0.52,0.56,0.62),
+                          vec3(0.55,0.45,0.65),
+                          vec3(0.90,1.10,1.05),
+                          vec3(0.12,0.28,0.44));
+
+      // ---- SEAM-FIX bands: use (cosA, sinA) instead of raw angle ----
+      float dist = length(pos);
+      float ang  = atan(pos.y, pos.x);
+      vec2  ac   = vec2(cos(ang), sin(ang)); // continuous around the circle
+      float bands = smoothstep(0.15, 0.85, intf);
+
+      float waveR = noise3(vec3(dist*10.0,  ac.x*3.0, ac.y*3.0 + bands*3.0 + uTime*0.30));
+      float waveG = noise3(vec3(dist*10.5,  ac.x*3.1, ac.y*3.1 + bands*3.3 + uTime*0.32));
+      float waveB = noise3(vec3(dist*11.0,  ac.x*3.2, ac.y*3.2 + bands*3.6 + uTime*0.34));
+      waveR = doubleExpSigmoid(waveR, 0.40);
+      waveG = doubleExpSigmoid(waveG, 0.40);
+      waveB = doubleExpSigmoid(waveB, 0.40);
+      vec3 bandRGB = vec3(waveR, waveG, waveB);
+      // -------------------------------------------------------------------
+
+      // (1) Slightly reduce band mix to avoid blanket color
+      vec3 base = mix( mix(colA, colB, intf), bandRGB, 0.35 );
+
+      // (2) Gentle outer desaturation where density is low
+      float lum = dot(base, vec3(0.299,0.587,0.114));
+      float chromaGate = smoothstep(0.08, 0.28, dens);   // 0..1
+      base = mix(vec3(lum)*0.96, base, 0.92*chromaGate + 0.08);
+
+      float veins = smoothstep(0.0, 0.6, 1.0 - sat(trap/8.0));
+      base += veins * 0.28 * vec3(1.0, 0.92, 1.1);
+
+      vec3 n = normalize(vec3(
+        sin(phase1*0.7) + sin(phase2*0.5),
+        cos(phase2*0.6) - cos(phase1*0.4),
+        1.0 - dens
+      ));
+
+      float diff = 0.6*max(dot(n,L1),0.0) + 0.4*max(dot(n,L2),0.0);
+      float spec1 = pow(max(dot(reflect(-L1,n), -rd), 0.0), 20.0);
+      float spec2 = pow(max(dot(reflect(-L2,n), -rd), 0.0), 26.0);
+      float spec  = (0.4*spec1 + 0.6*spec2) * uHolo;
+
+      float filmIri = 0.5 + 0.5*cos(6.28318*(0.11*t + 0.07*uTime + jitter));
+      float fres = pow(1.0 - sat(dot(n, -rd)), 2.0);
+      vec3 prism = vec3(
+        0.65 + 0.35*sin(phase1 + 1.3 + 0.5*t),
+        0.65 + 0.35*sin(phase2 + 2.1 + 0.6*t),
+        0.65 + 0.35*sin(phase1 - phase2 + 2.9 + 0.7*t)
+      );
+
+      vec3 stepCol = base * (0.78 + 0.22*depthMod + 0.10*filmIri*uHolo);
+      stepCol += diff * (0.25 * (0.7 + 0.3*uHolo));
+      stepCol += spec * (0.35 + 0.25*filmIri) * (0.4*prism + 0.6);
+      stepCol *= (1.0 + 0.25*edge);
+
+      float absorb = exp(-uAbsorbK*t);
+      stepCol *= absorb;
+
+      // (3) Softer alpha where density is low (keeps core crisp)
+      float a = sat(pow(dens, 0.85) * uAlphaK) * smoothstep(0.12, 0.40, dens);
+
+      a *= (1.0 - accAlpha);
+      col += stepCol * a;
+      accAlpha += a;
+
+      if(accAlpha > 0.98) break;
+    }
+
+    t += stepSize + (hash(gl_FragCoord.xy + float(i)*13.7) - 0.5) * 0.006;
+    if(t > maxT) break;
+    prevDens = densA;
+  }
+
+  float rim = pow(1.0 - sat(dot(uv,uv)), 2.0);
+  col += rim * vec3(0.2, 0.3, 0.5) * 0.5;
+
+  // --- Contrast + Brightness Boost ---
+  col = pow(col, vec3(0.92));          // gentle tone curve
+  col = mix(vec3(0.0), col, 1.25);     // lift highlights (~25%)
+  col = pow(col, vec3(1.15));          // deepen shadows & contrast
+
+  vec3 outCol = sat3(col);
+  if(uInvert > 0.5){ outCol = vec3(1.0) - outCol; }
+  gl_FragColor = vec4(outCol, 1.0);
+}
+`;
+    }
+
+    function setup(){
+      pixelDensity(1);
+      createCanvas(windowWidth, windowHeight, WEBGL);
+      noStroke();
+
+      const cfg = POWER_MODE
+        ? { STEPS: 96, STEP_BASE_DEFAULT: 0.040 }
+        : { STEPS: 36, STEP_BASE_DEFAULT: 0.060 };
+
+      fragSource = buildFrag(cfg);
+      sh = createShader(VERT, fragSource);
+      prevMillis = millis();
+    }
+
+    function windowResized(){
+      resizeCanvas(windowWidth, windowHeight);
+    }
+
+    // ----- Touch / gestures -----
+
+    function touchStarted(){
+      if (touches.length === 1){
+        tapStartT = millis();
+        tapStartX = touches[0].x;
+        tapStartY = touches[0].y;
+      }
+      isTouching = true;
+    }
+
+    function touchMoved() {
+      // One finger: rotate (yaw/pitch)
+      if (touches.length === 1) {
+        const t0 = touches[0];
+        if (lastDragX != null && lastDragY != null) {
+          const dx = (t0.x - lastDragX) / width;
+          const dy = (t0.y - lastDragY) / height;
+          yaw   += dx * Math.PI * 1.5;
+          pitch += dy * Math.PI * 1.2;
+          const limit = Math.PI * 0.48;
+          pitch = Math.max(-limit, Math.min(limit, pitch));
+        }
+        lastDragX = t0.x; lastDragY = t0.y;
+      }
+
+      // Two fingers: reversed pinch zoom (pinch OUT → zoom IN)
+      if (touches.length >= 2) {
+        const ax = touches[0].x, ay = touches[0].y;
+        const bx = touches[1].x, by = touches[1].y;
+        const dist = Math.hypot(ax - bx, ay - by);
+        if (pinchStartDist == null) pinchStartDist = dist;
+
+        const scale = dist / (pinchStartDist || dist);
+        zoom *= Math.pow(scale, -0.06);               // reverse response
+        zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
+        pinchStartDist = dist;
+      }
+      return false;
+    }
+
+    function touchEnded() {
+      if (touches.length === 0) {
+        const dt = millis() - tapStartT;
+        const moved = Math.hypot((mouseX - tapStartX), (mouseY - tapStartY));
+        if (dt > 20 && dt < 220 && moved < 18) invertOn = !invertOn; // tap toggle
+        lastDragX = lastDragY = null;
+        pinchStartDist = null;
+        isTouching = false;
+      }
+    }
+
+    // Desktop click toggle (optional)
+    function mouseClicked(){
+      if (!mouseIsPressed && touches.length === 0){
+        invertOn = !invertOn;
+      }
+    }
+
+    function draw(){
+      const now = millis();
+      const dt = (now - prevMillis) * 0.001;
+      prevMillis = now;
+
+      const interacting = (mouseIsPressed || touches.length > 0 || isTouching);
+
+      // Idle gentle rotation
+      if (!interacting){
+        yaw   += IDLE_SPIN_YAW   * dt;
+        pitch += IDLE_SPIN_PITCH * dt;
+      }
+
+      // Brightness: default bright (2.0), press = extra bright (3.0)
+      const uHolo = interacting ? 3.0 : 2.0;
+
+      const stepBase = POWER_MODE ? 0.040 : 0.060;
+      const uAbsorbK = 0.56;   // (4) slightly stronger absorption
+      const uAlphaK  = 0.18;
+
+      shader(sh);
+      sh.setUniform('uResolution', [width, height]);
+      sh.setUniform('uTime', now*0.001);
+      sh.setUniform('uZoom',  zoom);
+      sh.setUniform('uYaw',   yaw);
+      sh.setUniform('uPitch', pitch);
+      sh.setUniform('uHolo',  uHolo);
+      sh.setUniform('uStepBase', stepBase);
+      sh.setUniform('uAbsorbK',  uAbsorbK);
+      sh.setUniform('uAlphaK',   uAlphaK);
+      sh.setUniform('uInvert',   invertOn ? 1.0 : 0.0);
+
+      rect(-width/2, -height/2, width, height);
+    }
+
+    // ---------- shared vertex shader ----------
+    const VERT = `
+precision mediump float;
+attribute vec3 aPosition;
+attribute vec2 aTexCoord;
+uniform mat4 uProjectionMatrix, uModelViewMatrix;
+varying vec2 vUv;
+void main(){
+  vUv = aTexCoord;
+  gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition,1.0);
+}
+`;
+  </script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Let's Get Off Together</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    iframe {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <iframe id="artwork" allowfullscreen></iframe>
+  <script>
+    const teamEarth = [
+      "team-earth/clouds_shield_config_background/index.html",
+      "team-earth/oillll/index_bundled.html",
+      "team-earth/Beziorb copy.html",
+      "team-earth/Circles copy.html",
+      "team-earth/Eigenfield copy.html",
+      "team-earth/Hearth copy.html",
+      "team-earth/Hypertorus copy.html",
+      "team-earth/Julia copy.html",
+      "team-earth/Puddle copy.html"
+    ];
+
+    const justiceAI = [
+      "justice-ai/justice_1/index.html",
+      "justice-ai/justice_2/index.html",
+      "justice-ai/justice_3/index.html"
+    ];
+
+    const collections = [teamEarth, justiceAI];
+    let collectionIndex = 0;
+    let artworkIndex = 0;
+    let timer = null;
+
+    const iframe = document.getElementById("artwork");
+    const INTERVAL = 4 * 60 * 1000; // 4 minutes
+
+    function showCurrent() {
+      const collection = collections[collectionIndex];
+      iframe.src = collection[artworkIndex];
+    }
+
+    function advance() {
+      const collection = collections[collectionIndex];
+      artworkIndex = (artworkIndex + 1) % collection.length;
+      showCurrent();
+    }
+
+    function startCycle() {
+      clearInterval(timer);
+      timer = setInterval(advance, INTERVAL);
+    }
+
+    document.addEventListener("keydown", function(e) {
+      if (e.code === "Space") {
+        e.preventDefault();
+        collectionIndex = (collectionIndex + 1) % collections.length;
+        artworkIndex = 0;
+        showCurrent();
+        startCycle();
+      }
+    });
+
+    showCurrent();
+    startCycle();
+  </script>
+</body>
+</html>
