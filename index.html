@@ -88,6 +88,17 @@
       }
     });
 
+    iframe.addEventListener("load", function() {
+      try {
+        iframe.contentWindow.addEventListener("keydown", function(e) {
+          if (e.code === "Space" || e.code === "ArrowLeft" || e.code === "ArrowRight") {
+            e.preventDefault();
+            document.dispatchEvent(new KeyboardEvent("keydown", { code: e.code }));
+          }
+        });
+      } catch(err) {}
+    });
+
     showCurrent();
     startCycle();
   </script>
