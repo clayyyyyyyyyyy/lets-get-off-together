@@ -53,7 +53,7 @@
 
     function showCurrent() {
       const collection = collections[collectionIndex];
-      iframe.src = collection[artworkIndex];
+      iframe.src = collection[artworkIndex] + "?v=" + Date.now();
     }
 
     function advance() {
