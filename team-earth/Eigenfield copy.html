@@ -217,7 +217,8 @@
       float t = uPhase;
 
       vec2 uv = vUv;
-      vec2 sc = vec2(1.0, uResolution.y/uResolution.x);
+      float minDim = min(uResolution.x, uResolution.y);
+      vec2 sc = uResolution.xy / minDim;
 
       // --- base eigenfield ---
       float phi = fieldAll(uv, t, sc, uTouch, uTouchAmt, uMorph.y);
