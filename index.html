@@ -20,6 +20,7 @@
       width: 100%;
       height: 100%;
       border: none;
+      cursor: none;
     }
   </style>
 </head>
@@ -89,6 +90,8 @@
 
     iframe.addEventListener("load", function() {
       try {
+        iframe.contentDocument.body.style.cursor = "none";
+        iframe.contentDocument.documentElement.style.cursor = "none";
         iframe.contentWindow.addEventListener("keydown", function(e) {
           if (e.code === "Space" || e.code === "ArrowLeft" || e.code === "ArrowRight") {
             e.preventDefault();
