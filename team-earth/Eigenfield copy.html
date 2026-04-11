@@ -217,11 +217,13 @@
       float t = uPhase;
 
       vec2 uv = vUv;
-      float minDim = min(uResolution.x, uResolution.y);
-      vec2 sc = uResolution.xy / minDim;
+      float aspect = uResolution.x / uResolution.y;
+      vec2 sc = vec2(max(aspect, 1.0), max(1.0/aspect, 1.0));
+      // correct UV for aspect ratio so pattern isn't stretched on wide screens
+      vec2 uvField = (uv - 0.5) * sc + 0.5;
 
       // --- base eigenfield ---
-      float phi = fieldAll(uv, t, sc, uTouch, uTouchAmt, uMorph.y);
+      float phi = fieldAll(uvField, t, sc, uTouch, uTouchAmt, uMorph.y);
 
       // --- touch ripples (exact profile restored) ---
       float dPhi = 0.0, irShift = 0.0, spark = 0.0;
@@ -250,7 +252,7 @@
       phi += dPhi;
 
       // --- shading from gradient ---
-      vec2 g=gradFD(uv,t,sc,uTouch,uTouchAmt,uMorph.y);
+      vec2 g=gradFD(uvField,t,sc,uTouch,uTouchAmt,uMorph.y);
       float gmag=length(g);
       float breath=0.5+0.5*sin(0.33*t);
       float slopeScale=0.55+1.20*mix(0.6,1.0,breath)*smoothstep(0.0,1.0,gmag);
@@ -269,7 +271,7 @@
       irid = mix(irid, irid*1.15, clamp(irShift, 0.0, 0.25));
 
       float th = atan(n.y,n.x);
-      float lattice = quasi(uv + 0.05*vec2(sin(0.11*t),cos(0.13*t)), sc, 11.0, 17.0, 23.0);
+      float lattice = quasi(uvField + 0.05*vec2(sin(0.11*t),cos(0.13*t)), sc, 11.0, 17.0, 23.0);
       float grat = 0.5+0.5*cos((16.0+9.0*sin(0.14*t))*th + 0.9 + 1.1*lattice);
       irid = mix(irid, irid*grat, 0.24);
 
